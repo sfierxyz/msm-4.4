@@ -443,6 +443,7 @@ extern int schedule_on_each_cpu(work_func_t func);
 int execute_in_process_context(work_func_t fn, struct execute_work *);
 
 extern bool flush_work(struct work_struct *work);
+extern bool cancel_work(struct work_struct *work);
 extern bool cancel_work_sync(struct work_struct *work);
 
 extern bool flush_delayed_work(struct delayed_work *dwork);
@@ -574,7 +575,7 @@ static inline void flush_scheduled_work(void)
 static inline bool schedule_delayed_work_on(int cpu, struct delayed_work *dwork,
 					    unsigned long delay)
 {
-	return queue_delayed_work_on(cpu, system_wq, dwork, delay);
+	return queue_delayed_work_on(cpu, system_power_efficient_wq, dwork, delay);
 }
 
 /**
@@ -588,7 +589,16 @@ static inline bool schedule_delayed_work_on(int cpu, struct delayed_work *dwork,
 static inline bool schedule_delayed_work(struct delayed_work *dwork,
 					 unsigned long delay)
 {
-	return queue_delayed_work(system_wq, dwork, delay);
+	return queue_delayed_work(system_power_efficient_wq, dwork, delay);
+}
+
+/**
+ * delayed_work_busy - See work_busy()
+ * @dwork: the delayed work to be tested
+ */
+static inline unsigned int delayed_work_busy(struct delayed_work *dwork)
+{
+	return work_busy(&dwork->work);
 }
 
 /**
@@ -620,5 +630,11 @@ int workqueue_sysfs_register(struct workqueue_struct *wq);
 static inline int workqueue_sysfs_register(struct workqueue_struct *wq)
 { return 0; }
 #endif	/* CONFIG_SYSFS */
+
+#ifdef CONFIG_WQ_WATCHDOG
+void wq_watchdog_touch(int cpu);
+#else	/* CONFIG_WQ_WATCHDOG */
+static inline void wq_watchdog_touch(int cpu) { }
+#endif	/* CONFIG_WQ_WATCHDOG */
 
 #endif

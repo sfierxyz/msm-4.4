@@ -175,6 +175,10 @@ struct scsi_device {
 	unsigned no_dif:1;	/* T10 PI (DIF) should be disabled */
 	unsigned broken_fua:1;		/* Don't set FUA bit */
 	unsigned lun_in_cdb:1;		/* Store LUN bits in CDB[1] */
+	unsigned use_rpm_auto:1; /* Enable runtime PM auto suspend */
+
+#define SCSI_DEFAULT_AUTOSUSPEND_DELAY  -1
+	int autosuspend_delay;
 
 	atomic_t disk_events_disable_depth; /* disable depth for disk events */
 
@@ -213,6 +217,11 @@ struct scsi_device {
 #define sdev_dbg(sdev, fmt, a...) \
 	dev_dbg(&(sdev)->sdev_gendev, fmt, ##a)
 
+#ifndef CONFIG_DEBUG_KERNEL
+static inline void sdev_prefix_printk(const char *level, const struct scsi_device *sdev,
+			const char *name, const char *fmt, ...) {}
+#endif
+
 /*
  * like scmd_printk, but the device name is passed in
  * as a string pointer
@@ -224,8 +233,13 @@ sdev_prefix_printk(const char *, const struct scsi_device *, const char *,
 #define sdev_printk(l, sdev, fmt, a...)				\
 	sdev_prefix_printk(l, sdev, NULL, fmt, ##a)
 
+#ifdef CONFIG_DEBUG_KERNEL
 __printf(3, 4) void
 scmd_printk(const char *, const struct scsi_cmnd *, const char *, ...);
+#else
+static inline void scmd_printk(const char *level, const struct scsi_cmnd *scmd,
+		const char *fmt, ...) {}
+#endif
 
 #define scmd_dbg(scmd, fmt, a...)					   \
 	do {								   \

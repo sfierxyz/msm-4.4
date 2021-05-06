@@ -23,6 +23,12 @@
 #define ARCH_TIMER_CTRL_IT_MASK		(1 << 1)
 #define ARCH_TIMER_CTRL_IT_STAT		(1 << 2)
 
+#define CNTHCTL_EL1PCTEN		(1 << 0)
+#define CNTHCTL_EL1PCEN			(1 << 1)
+#define CNTHCTL_EVNTEN			(1 << 2)
+#define CNTHCTL_EVNTDIR			(1 << 3)
+#define CNTHCTL_EVNTI			(0xF << 4)
+
 enum arch_timer_reg {
 	ARCH_TIMER_REG_CTRL,
 	ARCH_TIMER_REG_TVAL,
@@ -48,6 +54,7 @@ enum arch_timer_reg {
 extern u32 arch_timer_get_rate(void);
 extern u64 (*arch_timer_read_counter)(void);
 extern struct timecounter *arch_timer_get_timecounter(void);
+extern bool arch_timer_evtstrm_available(void);
 
 #else
 
@@ -64,6 +71,11 @@ static inline u64 arch_timer_read_counter(void)
 static inline struct timecounter *arch_timer_get_timecounter(void)
 {
 	return NULL;
+}
+
+static inline bool arch_timer_evtstrm_available(void)
+{
+	return false;
 }
 
 #endif

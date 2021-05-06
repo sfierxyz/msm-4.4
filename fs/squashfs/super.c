@@ -153,7 +153,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	 * Check the system page size is not larger than the filesystem
 	 * block size (by default 128K).  This is currently not supported.
 	 */
-	if (PAGE_CACHE_SIZE > msblk->block_size) {
+	if (PAGE_SIZE > msblk->block_size) {
 		ERROR("Page size > filesystem block size (%d).  This is "
 			"currently not supported!\n", msblk->block_size);
 		goto failed_mount;
@@ -445,15 +445,9 @@ static int __init init_squashfs_fs(void)
 	if (err)
 		return err;
 
-	if (!squashfs_init_read_wq()) {
-		destroy_inodecache();
-		return -ENOMEM;
-        }
-
 	err = register_filesystem(&squashfs_fs_type);
 	if (err) {
 		destroy_inodecache();
-		squashfs_destroy_read_wq();
 		return err;
 	}
 
@@ -467,7 +461,6 @@ static void __exit exit_squashfs_fs(void)
 {
 	unregister_filesystem(&squashfs_fs_type);
 	destroy_inodecache();
-	squashfs_destroy_read_wq();
 }
 
 

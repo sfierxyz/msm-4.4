@@ -288,10 +288,10 @@ static int ext4_page_crypto(struct inode *inode,
 	       EXT4_XTS_TWEAK_SIZE - sizeof(index));
 
 	sg_init_table(&dst, 1);
-	sg_set_page(&dst, dest_page, PAGE_CACHE_SIZE, 0);
+	sg_set_page(&dst, dest_page, PAGE_SIZE, 0);
 	sg_init_table(&src, 1);
-	sg_set_page(&src, src_page, PAGE_CACHE_SIZE, 0);
-	ablkcipher_request_set_crypt(req, &src, &dst, PAGE_CACHE_SIZE,
+	sg_set_page(&src, src_page, PAGE_SIZE, 0);
+	ablkcipher_request_set_crypt(req, &src, &dst, PAGE_SIZE,
 				     xts_tweak);
 	if (rw == EXT4_DECRYPT)
 		res = crypto_ablkcipher_decrypt(req);
@@ -389,14 +389,12 @@ int ext4_decrypt(struct page *page)
 				page->index, page, page, GFP_NOFS);
 }
 
-int ext4_encrypted_zeroout(struct inode *inode, struct ext4_extent *ex)
+int ext4_encrypted_zeroout(struct inode *inode, ext4_lblk_t lblk,
+			   ext4_fsblk_t pblk, ext4_lblk_t len)
 {
 	struct ext4_crypto_ctx	*ctx;
 	struct page		*ciphertext_page = NULL;
 	struct bio		*bio;
-	ext4_lblk_t		lblk = le32_to_cpu(ex->ee_block);
-	ext4_fsblk_t		pblk = ext4_ext_pblock(ex);
-	unsigned int		len = ext4_ext_get_actual_len(ex);
 	int			ret, err = 0;
 
 #if 0
@@ -405,7 +403,7 @@ int ext4_encrypted_zeroout(struct inode *inode, struct ext4_extent *ex)
 		 (unsigned long) inode->i_ino, lblk, len);
 #endif
 
-	BUG_ON(inode->i_sb->s_blocksize != PAGE_CACHE_SIZE);
+	BUG_ON(inode->i_sb->s_blocksize != PAGE_SIZE);
 
 	ctx = ext4_get_crypto_ctx(inode, GFP_NOFS);
 	if (IS_ERR(ctx))
@@ -457,17 +455,10 @@ errout:
 	return err;
 }
 
-bool ext4_valid_enc_modes(uint32_t contents_mode, uint32_t filenames_mode)
+bool ext4_valid_contents_enc_mode(uint32_t mode)
 {
-	if (contents_mode == EXT4_ENCRYPTION_MODE_AES_256_XTS) {
-		return (filenames_mode == EXT4_ENCRYPTION_MODE_AES_256_CTS ||
-			filenames_mode == EXT4_ENCRYPTION_MODE_AES_256_HEH);
-	}
-
-	if (contents_mode == EXT4_ENCRYPTION_MODE_SPECK128_256_XTS)
-		return filenames_mode == EXT4_ENCRYPTION_MODE_SPECK128_256_CTS;
-
-	return false;
+	return (mode == EXT4_ENCRYPTION_MODE_AES_256_XTS ||
+		mode == EXT4_ENCRYPTION_MODE_PRIVATE);
 }
 
 /**

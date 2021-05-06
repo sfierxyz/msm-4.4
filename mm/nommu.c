@@ -162,7 +162,7 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		if (pages) {
 			pages[i] = virt_to_page(start);
 			if (pages[i])
-				page_cache_get(pages[i]);
+				get_page(pages[i]);
 		}
 		if (vmas)
 			vmas[i] = vma;
@@ -1274,7 +1274,7 @@ unsigned long do_mmap(struct file *file,
 	region->vm_flags = vm_flags;
 	region->vm_pgoff = pgoff;
 
-	INIT_LIST_HEAD(&vma->anon_vma_chain);
+	INIT_VMA(vma);
 	vma->vm_flags = vm_flags;
 	vma->vm_pgoff = pgoff;
 
@@ -1874,6 +1874,13 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 		 * cache and most inode caches should fall into this
 		 */
 		free += global_page_state(NR_SLAB_RECLAIMABLE);
+
+		/*
+		 * Part of the kernel memory, which can be released
+		 * under memory pressure.
+		 */
+		free += global_page_state(
+			NR_INDIRECTLY_RECLAIMABLE_BYTES) >> PAGE_SHIFT;
 
 		/*
 		 * Leave reserved pages. The pages are not for anonymous pages.

@@ -500,16 +500,6 @@ dtb-$(CONFIG_ARCH_ORION5X) += \
 	orion5x-rd88f5182-nas.dtb
 dtb-$(CONFIG_ARCH_PRIMA2) += \
 	prima2-evb.dtb
-dtb-$(CONFIG_ARCH_QCOM) += \
-	qcom-apq8064-cm-qs600.dtb \
-	qcom-apq8064-ifc6410.dtb \
-	qcom-apq8074-dragonboard.dtb \
-	qcom-apq8084-ifc6540.dtb \
-	qcom-apq8084-mtp.dtb \
-	qcom-ipq8064-ap148.dtb \
-	qcom-msm8660-surf.dtb \
-	qcom-msm8960-cdp.dtb \
-	qcom-msm8974-sony-xperia-honami.dtb
 dtb-$(CONFIG_ARCH_REALVIEW) += \
 	arm-realview-pb1176.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += \
@@ -778,6 +768,19 @@ dtb-$(CONFIG_ARCH_MEDIATEK) += \
 	mt8127-moose.dtb \
 	mt8135-evbp1.dtb
 dtb-$(CONFIG_ARCH_ZX) += zx296702-ad1.dtb
+
+DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES))
+ifneq ($(DTB_NAMES),)
+DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
+else
+DTB_LIST := $(dtb-y)
+endif
+
+targets += dtbs dtbs_install
+targets += $(DTB_LIST)
+
+#used for cleaning - not building
+subdir- := qcom
 endif
 
 dtstree		:= $(srctree)/$(src)
@@ -793,5 +796,10 @@ endif
 targets += dtbs dtbs_install
 targets += $(DTB_LIST)
 
+ifeq ($(CONFIG_ARM64),y)
 always		:= $(DTB_LIST)
+else
+dtbs: $(addprefix $(obj)/, $(DTB_LIST))
+	$(Q)rm -f $(obj)/../*.dtb
+endif
 clean-files	:= *.dtb

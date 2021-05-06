@@ -55,7 +55,7 @@ static void mpage_end_io(struct bio *bio)
 	struct bio_vec *bv;
 	int i;
 
-	if (trace_android_fs_dataread_end_enabled() &&
+/*	if (trace_android_fs_dataread_end_enabled() &&
 	    (bio_data_dir(bio) == READ)) {
 		struct page *first_page = bio->bi_io_vec[0].bv_page;
 
@@ -63,7 +63,7 @@ static void mpage_end_io(struct bio *bio)
 			trace_android_fs_dataread_end(first_page->mapping->host,
 						      page_offset(first_page),
 						      bio->bi_iter.bi_size);
-	}
+	} */
 
 	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
@@ -75,10 +75,10 @@ static void mpage_end_io(struct bio *bio)
 
 static struct bio *mpage_bio_submit(int rw, struct bio *bio)
 {
-	if (trace_android_fs_dataread_start_enabled() && (rw == READ)) {
-		struct page *first_page = bio->bi_io_vec[0].bv_page;
+/*	if (trace_android_fs_dataread_start_enabled() && (rw == READ)) {
+	struct page *first_page = bio->bi_io_vec[0].bv_page;
 
-		if (first_page != NULL) {
+	if (first_page != NULL) {
 			char *path, pathbuf[MAX_TRACE_PATHBUF_LEN];
 
 			path = android_fstrace_get_pathname(pathbuf,
@@ -92,7 +92,7 @@ static struct bio *mpage_bio_submit(int rw, struct bio *bio)
 				path,
 				current->comm);
 		}
-	}
+	} */
 	bio->bi_end_io = mpage_end_io;
 	guard_bio_eod(rw, bio);
 	submit_bio(rw, bio);
@@ -106,6 +106,8 @@ mpage_alloc(struct block_device *bdev,
 {
 	struct bio *bio;
 
+	/* Restrict the given (page cache) mask for slab allocations */
+	gfp_flags &= GFP_KERNEL;
 	bio = bio_alloc(gfp_flags, nr_vecs);
 
 	if (bio == NULL && (current->flags & PF_MEMALLOC)) {
@@ -142,7 +144,7 @@ map_buffer_to_page(struct page *page, struct buffer_head *bh, int page_block)
 		 * don't make any buffers if there is only one buffer on
 		 * the page and the page just needs to be set up to date
 		 */
-		if (inode->i_blkbits == PAGE_CACHE_SHIFT && 
+		if (inode->i_blkbits == PAGE_SHIFT &&
 		    buffer_uptodate(bh)) {
 			SetPageUptodate(page);    
 			return;
@@ -180,7 +182,7 @@ do_mpage_readpage(struct bio *bio, struct page *page, unsigned nr_pages,
 {
 	struct inode *inode = page->mapping->host;
 	const unsigned blkbits = inode->i_blkbits;
-	const unsigned blocks_per_page = PAGE_CACHE_SIZE >> blkbits;
+	const unsigned blocks_per_page = PAGE_SIZE >> blkbits;
 	const unsigned blocksize = 1 << blkbits;
 	sector_t block_in_file;
 	sector_t last_block;
@@ -197,7 +199,7 @@ do_mpage_readpage(struct bio *bio, struct page *page, unsigned nr_pages,
 	if (page_has_buffers(page))
 		goto confused;
 
-	block_in_file = (sector_t)page->index << (PAGE_CACHE_SHIFT - blkbits);
+	block_in_file = (sector_t)page->index << (PAGE_SHIFT - blkbits);
 	last_block = block_in_file + nr_pages * blocks_per_page;
 	last_block_in_file = (i_size_read(inode) + blocksize - 1) >> blkbits;
 	if (last_block > last_block_in_file)
@@ -284,7 +286,7 @@ do_mpage_readpage(struct bio *bio, struct page *page, unsigned nr_pages,
 	}
 
 	if (first_hole != blocks_per_page) {
-		zero_user_segment(page, first_hole << blkbits, PAGE_CACHE_SIZE);
+		zero_user_segment(page, first_hole << blkbits, PAGE_SIZE);
 		if (first_hole == 0) {
 			SetPageUptodate(page);
 			unlock_page(page);
@@ -366,7 +368,7 @@ confused:
  *
  * then this code just gives up and calls the buffer_head-based read function.
  * It does handle a page which has holes at the end - that is a common case:
- * the end-of-file on blocksize < PAGE_CACHE_SIZE setups.
+ * the end-of-file on blocksize < PAGE_SIZE setups.
  *
  * BH_Boundary explanation:
  *
@@ -397,7 +399,7 @@ mpage_readpages(struct address_space *mapping, struct list_head *pages,
 	sector_t last_block_in_bio = 0;
 	struct buffer_head map_bh;
 	unsigned long first_logical_block = 0;
-	gfp_t gfp = mapping_gfp_constraint(mapping, GFP_KERNEL);
+	gfp_t gfp = readahead_gfp_mask(mapping);
 
 	map_bh.b_state = 0;
 	map_bh.b_size = 0;
@@ -415,7 +417,7 @@ mpage_readpages(struct address_space *mapping, struct list_head *pages,
 					&first_logical_block,
 					get_block, gfp);
 		}
-		page_cache_release(page);
+		put_page(page);
 	}
 	BUG_ON(!list_empty(pages));
 	if (bio)
@@ -507,7 +509,7 @@ static int __mpage_writepage(struct page *page, struct writeback_control *wbc,
 	struct inode *inode = page->mapping->host;
 	const unsigned blkbits = inode->i_blkbits;
 	unsigned long end_index;
-	const unsigned blocks_per_page = PAGE_CACHE_SIZE >> blkbits;
+	const unsigned blocks_per_page = PAGE_SIZE >> blkbits;
 	sector_t last_block;
 	sector_t block_in_file;
 	sector_t blocks[MAX_BUF_PER_PAGE];
@@ -577,7 +579,7 @@ static int __mpage_writepage(struct page *page, struct writeback_control *wbc,
 	 * The page has no buffers: map it to disk
 	 */
 	BUG_ON(!PageUptodate(page));
-	block_in_file = (sector_t)page->index << (PAGE_CACHE_SHIFT - blkbits);
+	block_in_file = (sector_t)page->index << (PAGE_SHIFT - blkbits);
 	last_block = (i_size - 1) >> blkbits;
 	map_bh.b_page = page;
 	for (page_block = 0; page_block < blocks_per_page; ) {
@@ -609,7 +611,7 @@ static int __mpage_writepage(struct page *page, struct writeback_control *wbc,
 	first_unmapped = page_block;
 
 page_is_mapped:
-	end_index = i_size >> PAGE_CACHE_SHIFT;
+	end_index = i_size >> PAGE_SHIFT;
 	if (page->index >= end_index) {
 		/*
 		 * The page straddles i_size.  It must be zeroed out on each
@@ -619,11 +621,11 @@ page_is_mapped:
 		 * is zeroed when mapped, and writes to that region are not
 		 * written out to the file."
 		 */
-		unsigned offset = i_size & (PAGE_CACHE_SIZE - 1);
+		unsigned offset = i_size & (PAGE_SIZE - 1);
 
 		if (page->index > end_index || !offset)
 			goto confused;
-		zero_user_segment(page, offset, PAGE_CACHE_SIZE);
+		zero_user_segment(page, offset, PAGE_SIZE);
 	}
 
 	/*

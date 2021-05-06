@@ -4,6 +4,7 @@
  * Written by Stephen C. Tweedie <sct@redhat.com>, 1998
  *
  * Copyright 1998 Red Hat corp --- All Rights Reserved
+ * Copyright (C) 2020 XiaoMi, Inc.
  *
  * This file is part of the Linux kernel and is made available under
  * the terms of the GNU General Public License, version 2, or at your
@@ -714,6 +715,23 @@ int jbd2_log_wait_commit(journal_t *journal, tid_t tid)
 	return err;
 }
 
+int jbd2_transaction_need_wait(journal_t *journal, tid_t tid)
+{
+	int need_to_wait = 1;
+	read_lock(&journal->j_state_lock);
+	if (journal->j_running_transaction &&
+	journal->j_running_transaction->t_tid == tid) {
+		if (journal->j_commit_request != tid) {
+			/* transaction not yet started, so request it */
+			need_to_wait = 1;
+		}
+	} else if (!(journal->j_committing_transaction &&
+		journal->j_committing_transaction->t_tid == tid))
+			need_to_wait = 0;
+	read_unlock(&journal->j_state_lock);
+	return need_to_wait;
+}
+
 /*
  * When this function returns the transaction corresponding to tid
  * will be completed.  If the transaction has currently running, start
@@ -898,7 +916,7 @@ int __jbd2_update_log_tail(journal_t *journal, tid_t tid, unsigned long block)
 	if (block < journal->j_tail)
 		freed += journal->j_last - journal->j_first;
 
-	trace_jbd2_update_log_tail(journal, tid, block, freed);
+//	trace_jbd2_update_log_tail(journal, tid, block, freed);
 	jbd_debug(1,
 		  "Cleaning journal tail from %d to %d (offset %lu), "
 		  "freeing %lu\n",
@@ -1329,7 +1347,7 @@ static int jbd2_write_superblock(journal_t *journal, int write_op)
 	journal_superblock_t *sb = journal->j_superblock;
 	int ret;
 
-	trace_jbd2_write_superblock(journal, write_op);
+//	trace_jbd2_write_superblock(journal, write_op);
 	if (!(journal->j_flags & JBD2_BARRIER))
 		write_op &= ~(REQ_FUA | REQ_FLUSH);
 	lock_buffer(bh);
@@ -2199,7 +2217,7 @@ void jbd2_journal_ack_err(journal_t *journal)
 
 int jbd2_journal_blocks_per_page(struct inode *inode)
 {
-	return 1 << (PAGE_CACHE_SHIFT - inode->i_sb->s_blocksize_bits);
+	return 1 << (PAGE_SHIFT - inode->i_sb->s_blocksize_bits);
 }
 
 /*
@@ -2556,6 +2574,10 @@ void jbd2_journal_init_jbd_inode(struct jbd2_inode *jinode, struct inode *inode)
 	jinode->i_next_transaction = NULL;
 	jinode->i_vfs_inode = inode;
 	jinode->i_flags = 0;
+	jinode->i_dirty_start = 0;
+	jinode->i_dirty_end = 0;
+	jinode->i_next_dirty_start = 0;
+	jinode->i_next_dirty_end = 0;
 	INIT_LIST_HEAD(&jinode->i_list);
 }
 

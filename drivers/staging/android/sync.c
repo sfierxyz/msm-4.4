@@ -29,6 +29,7 @@
 #include "sync.h"
 
 #define CREATE_TRACE_POINTS
+#define SYNC_DUMP_TIME_LIMIT 7000
 #include "trace/sync.h"
 
 static const struct fence_ops android_fence_ops;
@@ -107,7 +108,7 @@ void sync_timeline_signal(struct sync_timeline *obj)
 	LIST_HEAD(signaled_pts);
 	struct sync_pt *pt, *next;
 
-	trace_sync_timeline(obj);
+//	trace_sync_timeline(obj);
 
 	spin_lock_irqsave(&obj->child_list_lock, flags);
 
@@ -164,7 +165,9 @@ static struct sync_fence *sync_fence_alloc(int size, const char *name)
 		goto err;
 
 	kref_init(&fence->kref);
+#ifdef CONFIG_SYNC_DEBUG
 	strlcpy(fence->name, name, sizeof(fence->name));
+#endif
 
 	init_waitqueue_head(&fence->wq);
 
@@ -371,35 +374,37 @@ EXPORT_SYMBOL(sync_fence_cancel_async);
 int sync_fence_wait(struct sync_fence *fence, long timeout)
 {
 	long ret;
-	int i;
+//	int i;
 
 	if (timeout < 0)
 		timeout = MAX_SCHEDULE_TIMEOUT;
 	else
 		timeout = msecs_to_jiffies(timeout);
 
-	trace_sync_wait(fence, 1);
-	for (i = 0; i < fence->num_fences; ++i)
-		trace_sync_pt(fence->cbs[i].sync_pt);
+//	trace_sync_wait(fence, 1);
+//	for (i = 0; i < fence->num_fences; ++i)
+//		trace_sync_pt(fence->cbs[i].sync_pt);
 	ret = wait_event_interruptible_timeout(fence->wq,
 					       atomic_read(&fence->status) <= 0,
 					       timeout);
-	trace_sync_wait(fence, 0);
+//	trace_sync_wait(fence, 0);
 
 	if (ret < 0) {
 		return ret;
 	} else if (ret == 0) {
 		if (timeout) {
-			pr_info("fence timeout on [%p] after %dms\n", fence,
+			pr_info("fence timeout on [%pK] after %dms\n", fence,
 				jiffies_to_msecs(timeout));
-			sync_dump();
+			if (jiffies_to_msecs(timeout) >=
+				SYNC_DUMP_TIME_LIMIT)
+				sync_dump();
 		}
 		return -ETIME;
 	}
 
 	ret = atomic_read(&fence->status);
 	if (ret) {
-		pr_info("fence error %ld on [%p]\n", ret, fence);
+		pr_info("fence error %ld on [%pK]\n", ret, fence);
 		sync_dump();
 	}
 	return ret;
@@ -448,6 +453,8 @@ static bool android_fence_signaled(struct fence *fence)
 	int ret;
 
 	ret = parent->ops->has_signaled(pt);
+	if (!ret && parent->destroyed)
+		ret = -ENOENT;
 	if (ret < 0)
 		fence->status = ret;
 	return ret;

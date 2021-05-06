@@ -126,6 +126,7 @@ struct tc_fifo_qopt {
 struct tc_prio_qopt {
 	int	bands;			/* Number of bands */
 	__u8	priomap[TC_PRIO_MAX+1];	/* Map: logical priority -> PRIO band */
+	__u8	enable_flow;		/* Enable dequeue */
 };
 
 /* MULTIQ section */
@@ -711,6 +712,8 @@ enum {
 	TCA_FQ_CODEL_FLOWS,
 	TCA_FQ_CODEL_QUANTUM,
 	TCA_FQ_CODEL_CE_THRESHOLD,
+	TCA_FQ_CODEL_DROP_BATCH_SIZE,
+	TCA_FQ_CODEL_MEMORY_LIMIT,
 	__TCA_FQ_CODEL_MAX
 };
 
@@ -735,6 +738,8 @@ struct tc_fq_codel_qd_stats {
 	__u32	new_flows_len;	/* count of flows in new list */
 	__u32	old_flows_len;	/* count of flows in old list */
 	__u32	ce_mark;	/* packets above ce_threshold */
+	__u32	memory_usage;	/* in bytes */
+	__u32	drop_overmemory;
 };
 
 struct tc_fq_codel_cl_stats {
@@ -780,6 +785,8 @@ enum {
 	TCA_FQ_FLOW_REFILL_DELAY,	/* flow credit refill delay in usec */
 
 	TCA_FQ_ORPHAN_MASK,	/* mask applied to orphaned skb hashes */
+
+	TCA_FQ_LOW_RATE_THRESHOLD, /* per packet delay under this rate */
 
 	__TCA_FQ_MAX
 };

@@ -38,6 +38,7 @@ modules.builtin
 Module.symvers
 *.dwo
 *.su
+*.c.[012]*.*
 
 #
 # Top-level generic files
@@ -116,3 +117,11 @@ all.config
 
 # fetched Android config fragments
 android/configs/android-*.cfg
+
+#
+#Ignoring Android.bp link file
+#
+Android.bp
+
+*.sh
+/out

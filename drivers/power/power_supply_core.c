@@ -78,7 +78,6 @@ static void power_supply_changed_work(struct work_struct *work)
 						changed_work);
 
 	dev_dbg(&psy->dev, "%s\n", __func__);
-
 	spin_lock_irqsave(&psy->changed_lock, flags);
 	/*
 	 * Check 'changed' here to avoid issues due to race between
@@ -114,7 +113,7 @@ void power_supply_changed(struct power_supply *psy)
 	unsigned long flags;
 
 	dev_dbg(&psy->dev, "%s\n", __func__);
-
+		
 	spin_lock_irqsave(&psy->changed_lock, flags);
 	psy->changed = true;
 	pm_stay_awake(&psy->dev);
@@ -166,8 +165,8 @@ static int __power_supply_populate_supplied_from(struct device *dev,
 		if (np == epsy->of_node) {
 			dev_info(&psy->dev, "%s: Found supply : %s\n",
 				psy->desc->name, epsy->desc->name);
-			psy->supplied_from[i-1] = (char *)epsy->desc->name;
-			psy->num_supplies++;
+			psy->supplied_from[psy->num_supplies++] =
+				(char *)epsy->desc->name;
 			of_node_put(np);
 			break;
 		}

@@ -94,22 +94,26 @@ ip6_packet_match(const struct sk_buff *skb,
 {
 	unsigned long ret;
 	const struct ipv6hdr *ipv6 = ipv6_hdr(skb);
+#if IS_ENABLED(IP6_NF_IPTABLES_128)
+	const __uint128_t *ulm1 = (const __uint128_t *)&ip6info->smsk;
+	const __uint128_t *ulm2 = (const __uint128_t *)&ip6info->dmsk;
+#endif
 
 #define FWINV(bool, invflg) ((bool) ^ !!(ip6info->invflags & (invflg)))
 
-	if (FWINV(ipv6_masked_addr_cmp(&ipv6->saddr, &ip6info->smsk,
-				       &ip6info->src), IP6T_INV_SRCIP) ||
-	    FWINV(ipv6_masked_addr_cmp(&ipv6->daddr, &ip6info->dmsk,
-				       &ip6info->dst), IP6T_INV_DSTIP)) {
-		dprintf("Source or dest mismatch.\n");
-/*
-		dprintf("SRC: %u. Mask: %u. Target: %u.%s\n", ip->saddr,
-			ipinfo->smsk.s_addr, ipinfo->src.s_addr,
-			ipinfo->invflags & IP6T_INV_SRCIP ? " (INV)" : "");
-		dprintf("DST: %u. Mask: %u. Target: %u.%s\n", ip->daddr,
-			ipinfo->dmsk.s_addr, ipinfo->dst.s_addr,
-			ipinfo->invflags & IP6T_INV_DSTIP ? " (INV)" : "");*/
-		return false;
+#if IS_ENABLED(IP6_NF_IPTABLES_128)
+	if (*ulm1 || *ulm2)
+#endif
+	{
+		if (FWINV(ipv6_masked_addr_cmp
+			  (&ipv6->saddr, &ip6info->smsk, &ip6info->src),
+			   IP6T_INV_SRCIP) ||
+		    FWINV(ipv6_masked_addr_cmp(&ipv6->daddr, &ip6info->dmsk,
+					       &ip6info->dst),
+			  IP6T_INV_DSTIP)) {
+			dprintf("Source or dest mismatch.\n");
+			return false;
+		}
 	}
 
 	ret = ifname_compare_aligned(indev, ip6info->iniface, ip6info->iniface_mask);
@@ -234,15 +238,15 @@ static const char *const comments[] = {
 	[NF_IP6_TRACE_COMMENT_POLICY]	= "policy",
 };
 
-static struct nf_loginfo trace_loginfo = {
-	.type = NF_LOG_TYPE_LOG,
-	.u = {
-		.log = {
-			.level = LOGLEVEL_WARNING,
-			.logflags = NF_LOG_MASK,
-		},
-	},
-};
+// static struct nf_loginfo trace_loginfo = {
+// 	.type = NF_LOG_TYPE_LOG,
+// 	.u = {
+// 		.log = {
+// 			.level = LOGLEVEL_WARNING,
+// 			.logflags = NF_LOG_MASK,
+// 		},
+// 	},
+// };
 
 /* Mildly perf critical (only if packet tracing is on) */
 static inline int
@@ -299,9 +303,9 @@ static void trace_packet(struct net *net,
 		    &chainname, &comment, &rulenum) != 0)
 			break;
 
-	nf_log_trace(net, AF_INET6, hook, skb, in, out, &trace_loginfo,
-		     "TRACE: %s:%s:%s:%u ",
-		     tablename, chainname, comment, rulenum);
+	// nf_log_trace(net, AF_INET6, hook, skb, in, out, &trace_loginfo,
+	// 	     "TRACE: %s:%s:%s:%u ",
+	// 	     tablename, chainname, comment, rulenum);
 }
 #endif
 

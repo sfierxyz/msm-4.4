@@ -53,6 +53,7 @@ enum hrtimer_restart {
  *
  * 0x00		inactive
  * 0x01		enqueued into rbtree
+ * 0x02		timer is pinned to a cpu
  *
  * The callback state is not part of the timer->state because clearing it would
  * mean touching the timer after the callback, this makes it impossible to free
@@ -72,6 +73,8 @@ enum hrtimer_restart {
  */
 #define HRTIMER_STATE_INACTIVE	0x00
 #define HRTIMER_STATE_ENQUEUED	0x01
+#define HRTIMER_PINNED_SHIFT	1
+#define HRTIMER_STATE_PINNED	(1 << HRTIMER_PINNED_SHIFT)
 
 /**
  * struct hrtimer - the basic hrtimer structure
@@ -88,12 +91,6 @@ enum hrtimer_restart {
  * @base:	pointer to the timer base (per cpu and per clock)
  * @state:	state information (See bit values above)
  * @is_rel:	Set if the timer was armed relative
- * @start_pid:  timer statistics field to store the pid of the task which
- *		started the timer
- * @start_site:	timer statistics field to store the site where the timer
- *		was started
- * @start_comm: timer statistics field to store the name of the process which
- *		started the timer
  *
  * The hrtimer structure must be initialized by hrtimer_init()
  */
@@ -104,11 +101,6 @@ struct hrtimer {
 	struct hrtimer_clock_base	*base;
 	u8				state;
 	u8				is_rel;
-#ifdef CONFIG_TIMER_STATS
-	int				start_pid;
-	void				*start_site;
-	char				start_comm[16];
-#endif
 };
 
 /**
@@ -357,6 +349,9 @@ DECLARE_PER_CPU(struct tick_device, tick_cpu_device);
 
 /* Exported timer functions: */
 
+/* To be used from cpusets, only */
+extern void hrtimer_quiesce_cpu(void *cpup);
+
 /* Initialize timers: */
 extern void hrtimer_init(struct hrtimer *timer, clockid_t which_clock,
 			 enum hrtimer_mode mode);
@@ -390,7 +385,7 @@ extern void hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 static inline void hrtimer_start(struct hrtimer *timer, ktime_t tim,
 				 const enum hrtimer_mode mode)
 {
-	hrtimer_start_range_ns(timer, tim, 0, mode);
+	hrtimer_start_range_ns(timer, tim, 500000, mode);
 }
 
 extern int hrtimer_cancel(struct hrtimer *timer);
@@ -403,7 +398,7 @@ static inline void hrtimer_start_expires(struct hrtimer *timer,
 	ktime_t soft, hard;
 	soft = hrtimer_get_softexpires(timer);
 	hard = hrtimer_get_expires(timer);
-	delta = ktime_to_ns(ktime_sub(hard, soft));
+	delta = max(ktime_to_ns(ktime_sub(hard, soft)), 500000LL);
 	hrtimer_start_range_ns(timer, soft, delta, mode);
 }
 
@@ -424,18 +419,12 @@ extern u64 hrtimer_get_next_event(void);
 
 extern bool hrtimer_active(const struct hrtimer *timer);
 
-/**
- * hrtimer_is_queued = check, whether the timer is on one of the queues
- * @timer:	Timer to check
- *
- * Returns: True if the timer is queued, false otherwise
- *
- * The function can be used lockless, but it gives only a current snapshot.
+/*
+ * Helper function to check, whether the timer is on one of the queues
  */
-static inline bool hrtimer_is_queued(struct hrtimer *timer)
+static inline int hrtimer_is_queued(struct hrtimer *timer)
 {
-	/* The READ_ONCE pairs with the update functions of timer->state */
-	return !!(READ_ONCE(timer->state) & HRTIMER_STATE_ENQUEUED);
+	return timer->state & HRTIMER_STATE_ENQUEUED;
 }
 
 /*

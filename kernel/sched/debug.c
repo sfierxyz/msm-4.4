@@ -211,6 +211,8 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 			cfs_rq->runnable_load_avg);
 	SEQ_printf(m, "  .%-30s: %lu\n", "util_avg",
 			cfs_rq->avg.util_avg);
+	SEQ_printf(m, "  .%-30s: %u\n", "util_est_enqueued",
+			cfs_rq->avg.util_est.enqueued);
 	SEQ_printf(m, "  .%-30s: %ld\n", "removed_load_avg",
 			atomic_long_read(&cfs_rq->removed_load_avg));
 	SEQ_printf(m, "  .%-30s: %ld\n", "removed_util_avg",
@@ -408,6 +410,7 @@ static int sched_debug_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+#ifdef CONFIG_SYSRQ_SCHED_DEBUG
 void sysrq_sched_debug_show(void)
 {
 	int cpu;
@@ -417,6 +420,7 @@ void sysrq_sched_debug_show(void)
 		print_cpu(NULL, cpu);
 
 }
+#endif
 
 /*
  * This itererator needs some explanation.
@@ -658,6 +662,8 @@ void proc_sched_show_task(struct task_struct *p, struct seq_file *m)
 	P(se.avg.load_avg);
 	P(se.avg.util_avg);
 	P(se.avg.last_update_time);
+	P(se.avg.util_est.ewma);
+	P(se.avg.util_est.enqueued);
 #endif
 	P(policy);
 	P(prio);

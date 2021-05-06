@@ -2,6 +2,7 @@
  *  linux/init/main.c
  *
  *  Copyright (C) 1991, 1992  Linus Torvalds
+ *  Copyright (C) 2019 XiaoMi, Inc.
  *
  *  GK 2/5/95  -  Changed to support mounting root fs via NFS
  *  Added initrd & change_root: Werner Almesberger & Hans Lermen, Feb '96
@@ -88,7 +89,7 @@
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
-
+#include <soc/qcom/boot_stats.h>
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -128,6 +129,25 @@ static char *initcall_command_line;
 
 static char *execute_command;
 static char *ramdisk_execute_command;
+
+bool wired_btn_altmode = false;
+static int __init set_wiredbtnmode(char *val)
+{
+	unsigned int temp;
+
+	get_option(&val, &temp);
+
+	if (temp) {
+		wired_btn_altmode = true;
+		pr_info("Kernel: alternate wired button mode = 1");
+	} else {
+		wired_btn_altmode = false;
+		pr_info("Kernel: alternate wired button mode = 0");
+	}
+
+	return 0;
+}
+__setup("androidboot.wiredbtnaltmode=", set_wiredbtnmode);
 
 /*
  * Used to generate warnings if static_key manipulation functions are used
@@ -492,11 +512,15 @@ static void __init mm_init(void)
 	ioremap_huge_init();
 	kaiser_init();
 }
+int fpsensor=1;
+bool is_poweroff_charge = false;
+void __init init_dma_buf_kmem_pool(void);
 
 asmlinkage __visible void __init start_kernel(void)
 {
 	char *command_line;
 	char *after_dashes;
+	char *p=NULL;
 
 	/*
 	 * Need to run as early as possible, to initialize the
@@ -506,11 +530,6 @@ asmlinkage __visible void __init start_kernel(void)
 	set_task_stack_end_magic(&init_task);
 	smp_setup_processor_id();
 	debug_objects_early_init();
-
-	/*
-	 * Set up the the initial canary ASAP:
-	 */
-	boot_init_stack_canary();
 
 	cgroup_init_early();
 
@@ -525,6 +544,10 @@ asmlinkage __visible void __init start_kernel(void)
 	page_address_init();
 	pr_notice("%s", linux_banner);
 	setup_arch(&command_line);
+	/*
+	 * Set up the the initial canary ASAP:
+	 */
+	boot_init_stack_canary();
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
@@ -537,6 +560,20 @@ asmlinkage __visible void __init start_kernel(void)
 	pr_notice("Kernel command line: %s\n", boot_command_line);
 	/* parameters may set static keys */
 	jump_label_init();
+	p = NULL;
+	p= strstr(boot_command_line,"androidboot.fpsensor=fpc");
+	if(p){
+		fpsensor = 1;
+	}else{
+		fpsensor = 2;
+	}
+
+	p= NULL;
+	p= strstr(boot_command_line,"androidboot.mode=charger");
+	if(p)
+	{
+		is_poweroff_charge = true;
+	}
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
@@ -659,12 +696,14 @@ asmlinkage __visible void __init start_kernel(void)
 	signals_init();
 	/* rootfs populating might need page-writeback */
 	page_writeback_init();
+	seq_file_init();
 	proc_root_init();
 	nsfs_init();
 	cpuset_init();
 	cgroup_init();
 	taskstats_init_early();
 	delayacct_init();
+	init_dma_buf_kmem_pool();
 
 	check_bugs();
 
@@ -806,6 +845,7 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	}
 	WARN(msgbuf[0], "initcall %pF returned with %s\n", fn, msgbuf);
 
+	add_latent_entropy();
 	return ret;
 }
 
@@ -884,7 +924,6 @@ static void __init do_basic_setup(void)
 	do_ctors();
 	usermodehelper_enable();
 	do_initcalls();
-	random_int_secret_init();
 }
 
 static void __init do_pre_smp_initcalls(void)
@@ -965,6 +1004,7 @@ static int __ref kernel_init(void *unused)
 	numa_default_policy();
 
 	flush_delayed_fput();
+	place_marker("M : Kernel End");
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);

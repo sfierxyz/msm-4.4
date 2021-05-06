@@ -291,9 +291,11 @@ static struct rq *dl_task_offline_migration(struct rq *rq, struct task_struct *p
 	/*
 	 * By now the task is replenished and enqueued; migrate it.
 	 */
+	p->on_rq = TASK_ON_RQ_MIGRATING;
 	deactivate_task(rq, p, 0);
 	set_task_cpu(p, later_rq->cpu);
 	activate_task(later_rq, p, 0);
+	p->on_rq = TASK_ON_RQ_QUEUED;
 
 	if (!fallback)
 		resched_curr(later_rq);
@@ -691,10 +693,10 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
 						     struct sched_dl_entity,
 						     dl_timer);
 	struct task_struct *p = dl_task_of(dl_se);
-	unsigned long flags;
+	struct rq_flags rf;
 	struct rq *rq;
 
-	rq = task_rq_lock(p, &flags);
+	rq = task_rq_lock(p, &rf);
 
 	/*
 	 * The task might have changed its scheduling policy to something
@@ -787,7 +789,7 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
 #endif
 
 unlock:
-	task_rq_unlock(rq, p, &flags);
+	task_rq_unlock(rq, p, &rf);
 
 	/*
 	 * This can free the task_struct, including this hrtimer, do not touch

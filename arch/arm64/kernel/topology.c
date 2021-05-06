@@ -25,17 +25,18 @@
 #include <asm/cputype.h>
 #include <asm/topology.h>
 
+static DEFINE_PER_CPU(unsigned long, cpu_efficiency) = SCHED_CAPACITY_SCALE;
+
+unsigned long arch_get_cpu_efficiency(int cpu)
+{
+	return per_cpu(cpu_efficiency, cpu);
+}
+
 static DEFINE_PER_CPU(unsigned long, cpu_scale) = SCHED_CAPACITY_SCALE;
 
 unsigned long scale_cpu_capacity(struct sched_domain *sd, int cpu)
 {
-#ifdef CONFIG_CPU_FREQ
-	unsigned long max_freq_scale = cpufreq_scale_max_freq_capacity(cpu);
-
-	return per_cpu(cpu_scale, cpu) * max_freq_scale >> SCHED_CAPACITY_SHIFT;
-#else
 	return per_cpu(cpu_scale, cpu);
-#endif
 }
 
 static void set_capacity_scale(unsigned int cpu, unsigned long capacity)
@@ -186,6 +187,7 @@ static int __init parse_dt_topology(void)
 	struct device_node *cn, *map;
 	int ret = 0;
 	int cpu;
+	u32 efficiency;
 
 	cn = of_find_node_by_path("/cpus");
 	if (!cn) {
@@ -209,9 +211,18 @@ static int __init parse_dt_topology(void)
 	 * Check that all cores are in the topology; the SMP code will
 	 * only mark cores described in the DT as possible.
 	 */
-	for_each_possible_cpu(cpu)
+	for_each_possible_cpu(cpu) {
 		if (cpu_topology[cpu].cluster_id == -1)
 			ret = -EINVAL;
+
+		/* The CPU efficiency value passed from the device tree */
+		cn = of_get_cpu_node(cpu, NULL);
+		if (of_property_read_u32(cn, "efficiency", &efficiency) < 0) {
+			WARN_ON(1);
+			continue;
+		}
+		per_cpu(cpu_efficiency, cpu) = efficiency;
+	}
 
 out_map:
 	of_node_put(map);
@@ -288,8 +299,13 @@ static void update_cpu_capacity(unsigned int cpu)
 
 	set_capacity_scale(cpu, capacity);
 
-	pr_info("CPU%d: update cpu_capacity %lu\n",
+	pr_debug("CPU%d: update cpu_capacity %lu\n",
 		cpu, arch_scale_cpu_capacity(NULL, cpu));
+}
+
+void update_cpu_power_capacity(int cpu)
+{
+	update_cpu_capacity(cpu);
 }
 
 static void update_siblings_masks(unsigned int cpuid)
@@ -353,7 +369,6 @@ void store_cpu_topology(unsigned int cpuid)
 
 topology_populated:
 	update_siblings_masks(cpuid);
-	update_cpu_capacity(cpuid);
 }
 
 static void __init reset_cpu_topology(void)
@@ -376,16 +391,21 @@ static void __init reset_cpu_topology(void)
 
 void __init init_cpu_topology(void)
 {
+	int cpu;
+
 	reset_cpu_topology();
 
 	/*
 	 * Discard anything that was parsed if we hit an error so we
 	 * don't use partial information.
 	 */
-	if (of_have_populated_dt() && parse_dt_topology())
+	if (of_have_populated_dt() && parse_dt_topology()) {
 		reset_cpu_topology();
-	else
+	} else {
 		set_sched_topology(arm64_topology);
+		for_each_possible_cpu(cpu)
+			update_siblings_masks(cpu);
+	}
 
 	init_sched_energy_costs();
 }

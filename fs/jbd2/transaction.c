@@ -4,6 +4,7 @@
  * Written by Stephen C. Tweedie <sct@redhat.com>, 1998
  *
  * Copyright 1998 Red Hat corp --- All Rights Reserved
+ * Copyright (C) 2020 XiaoMi, Inc.
  *
  * This file is part of the Linux kernel and is made available under
  * the terms of the GNU General Public License, version 2, or at your
@@ -464,9 +465,9 @@ handle_t *jbd2__journal_start(journal_t *journal, int nblocks, int rsv_blocks,
 	}
 	handle->h_type = type;
 	handle->h_line_no = line_no;
-	trace_jbd2_handle_start(journal->j_fs_dev->bd_dev,
-				handle->h_transaction->t_tid, type,
-				line_no, nblocks);
+//	trace_jbd2_handle_start(journal->j_fs_dev->bd_dev,
+//				handle->h_transaction->t_tid, type,
+//				line_no, nblocks);
 	return handle;
 }
 EXPORT_SYMBOL(jbd2__journal_start);
@@ -598,11 +599,11 @@ int jbd2_journal_extend(handle_t *handle, int nblocks)
 		goto unlock;
 	}
 
-	trace_jbd2_handle_extend(journal->j_fs_dev->bd_dev,
-				 transaction->t_tid,
-				 handle->h_type, handle->h_line_no,
-				 handle->h_buffer_credits,
-				 nblocks);
+//	trace_jbd2_handle_extend(journal->j_fs_dev->bd_dev,
+//				 transaction->t_tid,
+//				 handle->h_type, handle->h_line_no,
+//				 handle->h_buffer_credits,
+//				 nblocks);
 
 	handle->h_buffer_credits += nblocks;
 	handle->h_requested_credits += nblocks;
@@ -837,9 +838,9 @@ repeat:
 
 	/* If it takes too long to lock the buffer, trace it */
 	time_lock = jbd2_time_diff(start_lock, jiffies);
-	if (time_lock > HZ/10)
-		trace_jbd2_lock_buffer_stall(bh->b_bdev->bd_dev,
-			jiffies_to_msecs(time_lock));
+//	if (time_lock > HZ/10)
+//		trace_jbd2_lock_buffer_stall(bh->b_bdev->bd_dev,
+//			jiffies_to_msecs(time_lock));
 
 	/* We now hold the buffer lock so it is safe to query the buffer
 	 * state.  Is the buffer dirty?
@@ -1670,13 +1671,13 @@ int jbd2_journal_stop(handle_t *handle)
 	}
 
 	jbd_debug(4, "Handle %p going down\n", handle);
-	trace_jbd2_handle_stats(journal->j_fs_dev->bd_dev,
+/*	trace_jbd2_handle_stats(journal->j_fs_dev->bd_dev,
 				transaction->t_tid,
 				handle->h_type, handle->h_line_no,
 				jiffies - handle->h_start_jiffies,
 				handle->h_sync, handle->h_requested_credits,
 				(handle->h_requested_credits -
-				 handle->h_buffer_credits));
+				 handle->h_buffer_credits)); */
 
 	/*
 	 * Implement synchronous transaction batching.  If the handle
@@ -2316,7 +2317,7 @@ int jbd2_journal_invalidatepage(journal_t *journal,
 	struct buffer_head *head, *bh, *next;
 	unsigned int stop = offset + length;
 	unsigned int curr_off = 0;
-	int partial_page = (offset || length < PAGE_CACHE_SIZE);
+	int partial_page = (offset || length < PAGE_SIZE);
 	int may_free = 1;
 	int ret = 0;
 
@@ -2325,7 +2326,7 @@ int jbd2_journal_invalidatepage(journal_t *journal,
 	if (!page_has_buffers(page))
 		return 0;
 
-	BUG_ON(stop > PAGE_CACHE_SIZE || stop < length);
+	BUG_ON(stop > PAGE_SIZE || stop < length);
 
 	/* We will potentially be playing with lists other than just the
 	 * data lists (especially for journaled data mode), so be
@@ -2522,7 +2523,8 @@ void jbd2_journal_refile_buffer(journal_t *journal, struct journal_head *jh)
 /*
  * File inode in the inode list of the handle's transaction
  */
-int jbd2_journal_file_inode(handle_t *handle, struct jbd2_inode *jinode)
+int jbd2_journal_file_inode(handle_t *handle, struct jbd2_inode *jinode,
+		loff_t start_byte, loff_t end_byte)
 {
 	transaction_t *transaction = handle->h_transaction;
 	journal_t *journal;
@@ -2533,23 +2535,6 @@ int jbd2_journal_file_inode(handle_t *handle, struct jbd2_inode *jinode)
 
 	jbd_debug(4, "Adding inode %lu, tid:%d\n", jinode->i_vfs_inode->i_ino,
 			transaction->t_tid);
-
-	/*
-	 * First check whether inode isn't already on the transaction's
-	 * lists without taking the lock. Note that this check is safe
-	 * without the lock as we cannot race with somebody removing inode
-	 * from the transaction. The reason is that we remove inode from the
-	 * transaction only in journal_release_jbd_inode() and when we commit
-	 * the transaction. We are guarded from the first case by holding
-	 * a reference to the inode. We are safe against the second case
-	 * because if jinode->i_transaction == transaction, commit code
-	 * cannot touch the transaction because we hold reference to it,
-	 * and if jinode->i_next_transaction == transaction, commit code
-	 * will only file the inode where we want it.
-	 */
-	if (jinode->i_transaction == transaction ||
-	    jinode->i_next_transaction == transaction)
-		return 0;
 
 	spin_lock(&journal->j_list_lock);
 
@@ -2578,6 +2563,23 @@ int jbd2_journal_file_inode(handle_t *handle, struct jbd2_inode *jinode)
 	jinode->i_transaction = transaction;
 	list_add(&jinode->i_list, &transaction->t_inode_list);
 done:
+	if (jinode->i_transaction == transaction) {
+		if (jinode->i_dirty_end) {
+			jinode->i_dirty_start = min(jinode->i_dirty_start, start_byte);
+			jinode->i_dirty_end = max(jinode->i_dirty_end, end_byte);
+		} else {
+			jinode->i_dirty_start = start_byte;
+			jinode->i_dirty_end = end_byte;
+		}
+	} else {
+		if (jinode->i_next_dirty_end) {
+			jinode->i_next_dirty_start = min(jinode->i_next_dirty_start, start_byte);
+			jinode->i_next_dirty_end = max(jinode->i_next_dirty_end, end_byte);
+		} else {
+			jinode->i_next_dirty_start = start_byte;
+			jinode->i_next_dirty_end = end_byte;
+		}
+	}
 	spin_unlock(&journal->j_list_lock);
 
 	return 0;

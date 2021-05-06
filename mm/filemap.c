@@ -233,16 +233,18 @@ void __delete_from_page_cache(struct page *page, void *shadow,
 {
 	struct address_space *mapping = page->mapping;
 
-	trace_mm_filemap_delete_from_page_cache(page);
+//	trace_mm_filemap_delete_from_page_cache(page);
 	/*
 	 * if we're uptodate, flush out into the cleancache, otherwise
 	 * invalidate any existing cleancache entries.  We can't leave
 	 * stale data around in the cleancache once our page is gone
 	 */
-	if (PageUptodate(page) && PageMappedToDisk(page))
+	if (PageUptodate(page) && PageMappedToDisk(page)) {
+		count_vm_event(PGPGOUTCLEAN);
 		cleancache_put_page(page);
-	else
+	} else {
 		cleancache_invalidate_page(mapping, page);
+	}
 
 	page_cache_tree_delete(mapping, page, shadow);
 
@@ -297,7 +299,7 @@ void delete_from_page_cache(struct page *page)
 
 	if (freepage)
 		freepage(page);
-	page_cache_release(page);
+	put_page(page);
 }
 EXPORT_SYMBOL(delete_from_page_cache);
 
@@ -385,8 +387,8 @@ EXPORT_SYMBOL(filemap_flush);
 static int __filemap_fdatawait_range(struct address_space *mapping,
 				     loff_t start_byte, loff_t end_byte)
 {
-	pgoff_t index = start_byte >> PAGE_CACHE_SHIFT;
-	pgoff_t end = end_byte >> PAGE_CACHE_SHIFT;
+	pgoff_t index = start_byte >> PAGE_SHIFT;
+	pgoff_t end = end_byte >> PAGE_SHIFT;
 	struct pagevec pvec;
 	int nr_pages;
 	int ret = 0;
@@ -395,18 +397,16 @@ static int __filemap_fdatawait_range(struct address_space *mapping,
 		goto out;
 
 	pagevec_init(&pvec, 0);
-	while ((index <= end) &&
-			(nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
-			PAGECACHE_TAG_WRITEBACK,
-			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1)) != 0) {
+	while (index <= end) {
 		unsigned i;
+
+		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
+				end, PAGECACHE_TAG_WRITEBACK);
+		if (!nr_pages)
+			break;
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
-
-			/* until radix tree lookup accepts end_index */
-			if (page->index > end)
-				continue;
 
 			wait_on_page_writeback(page);
 			if (TestClearPageError(page))
@@ -582,7 +582,7 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 		pgoff_t offset = old->index;
 		freepage = mapping->a_ops->freepage;
 
-		page_cache_get(new);
+		get_page(new);
 		new->mapping = mapping;
 		new->index = offset;
 
@@ -605,7 +605,7 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 		radix_tree_preload_end();
 		if (freepage)
 			freepage(old);
-		page_cache_release(old);
+		put_page(old);
 	}
 
 	return error;
@@ -638,7 +638,7 @@ static int __add_to_page_cache_locked(struct page *page,
 		return error;
 	}
 
-	page_cache_get(page);
+	get_page(page);
 	page->mapping = mapping;
 	page->index = offset;
 
@@ -654,7 +654,7 @@ static int __add_to_page_cache_locked(struct page *page,
 	spin_unlock_irq(&mapping->tree_lock);
 	if (!huge)
 		mem_cgroup_commit_charge(page, memcg, false);
-	trace_mm_filemap_add_to_page_cache(page);
+//	trace_mm_filemap_add_to_page_cache(page);
 	return 0;
 err_insert:
 	page->mapping = NULL;
@@ -662,7 +662,7 @@ err_insert:
 	spin_unlock_irq(&mapping->tree_lock);
 	if (!huge)
 		mem_cgroup_cancel_charge(page, memcg);
-	page_cache_release(page);
+	put_page(page);
 	return error;
 }
 
@@ -690,11 +690,11 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 	void *shadow = NULL;
 	int ret;
 
-	__set_page_locked(page);
+	__SetPageLocked(page);
 	ret = __add_to_page_cache_locked(page, mapping, offset,
 					 gfp_mask, &shadow);
 	if (unlikely(ret))
-		__clear_page_locked(page);
+		__ClearPageLocked(page);
 	else {
 		/*
 		 * The page might have been evicted from cache only
@@ -817,6 +817,7 @@ EXPORT_SYMBOL_GPL(add_page_wait_queue);
  */
 void unlock_page(struct page *page)
 {
+	page = compound_head(page);
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	clear_bit_unlock(PG_locked, &page->flags);
 	smp_mb__after_atomic();
@@ -884,18 +885,20 @@ EXPORT_SYMBOL_GPL(page_endio);
  */
 void __lock_page(struct page *page)
 {
-	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
+	struct page *page_head = compound_head(page);
+	DEFINE_WAIT_BIT(wait, &page_head->flags, PG_locked);
 
-	__wait_on_bit_lock(page_waitqueue(page), &wait, bit_wait_io,
+	__wait_on_bit_lock(page_waitqueue(page_head), &wait, bit_wait_io,
 							TASK_UNINTERRUPTIBLE);
 }
 EXPORT_SYMBOL(__lock_page);
 
 int __lock_page_killable(struct page *page)
 {
-	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
+	struct page *page_head = compound_head(page);
+	DEFINE_WAIT_BIT(wait, &page_head->flags, PG_locked);
 
-	return __wait_on_bit_lock(page_waitqueue(page), &wait,
+	return __wait_on_bit_lock(page_waitqueue(page_head), &wait,
 					bit_wait_io, TASK_KILLABLE);
 }
 EXPORT_SYMBOL_GPL(__lock_page_killable);
@@ -1070,7 +1073,7 @@ repeat:
 		 * include/linux/pagemap.h for details.
 		 */
 		if (unlikely(page != *pagep)) {
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 	}
@@ -1108,7 +1111,7 @@ repeat:
 		/* Has the page been truncated? */
 		if (unlikely(page->mapping != mapping)) {
 			unlock_page(page);
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 		VM_BUG_ON_PAGE(page->index != offset, page);
@@ -1155,7 +1158,7 @@ repeat:
 	if (fgp_flags & FGP_LOCK) {
 		if (fgp_flags & FGP_NOWAIT) {
 			if (!trylock_page(page)) {
-				page_cache_release(page);
+				put_page(page);
 				return NULL;
 			}
 		} else {
@@ -1165,7 +1168,7 @@ repeat:
 		/* Has the page been truncated? */
 		if (unlikely(page->mapping != mapping)) {
 			unlock_page(page);
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 		VM_BUG_ON_PAGE(page->index != offset, page);
@@ -1195,7 +1198,7 @@ no_page:
 
 		err = add_to_page_cache_lru(page, mapping, offset, gfp_mask);
 		if (unlikely(err)) {
-			page_cache_release(page);
+			put_page(page);
 			page = NULL;
 			if (err == -EEXIST)
 				goto repeat;
@@ -1263,7 +1266,7 @@ repeat:
 
 		/* Has the page moved? */
 		if (unlikely(page != *slot)) {
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 export:
@@ -1334,7 +1337,7 @@ repeat:
 
 		/* Has the page moved? */
 		if (unlikely(page != *slot)) {
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 
@@ -1401,7 +1404,7 @@ repeat:
 
 		/* Has the page moved? */
 		if (unlikely(page != *slot)) {
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 
@@ -1411,7 +1414,7 @@ repeat:
 		 * negatives, which is just confusing to the caller.
 		 */
 		if (page->mapping == NULL || page->index != iter.index) {
-			page_cache_release(page);
+			put_page(page);
 			break;
 		}
 
@@ -1425,9 +1428,10 @@ repeat:
 EXPORT_SYMBOL(find_get_pages_contig);
 
 /**
- * find_get_pages_tag - find and return pages that match @tag
+ * find_get_pages_range_tag - find and return pages in given range matching @tag
  * @mapping:	the address_space to search
  * @index:	the starting page index
+ * @end:	The final page index (inclusive)
  * @tag:	the tag index
  * @nr_pages:	the maximum number of pages
  * @pages:	where the resulting pages are placed
@@ -1435,8 +1439,9 @@ EXPORT_SYMBOL(find_get_pages_contig);
  * Like find_get_pages, except we only return pages which are tagged with
  * @tag.   We update @index to index the next page for the traversal.
  */
-unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
-			int tag, unsigned int nr_pages, struct page **pages)
+unsigned find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
+			pgoff_t end, int tag, unsigned int nr_pages,
+			struct page **pages)
 {
 	struct radix_tree_iter iter;
 	void **slot;
@@ -1450,6 +1455,9 @@ restart:
 	radix_tree_for_each_tagged(slot, &mapping->page_tree,
 				   &iter, *index, tag) {
 		struct page *page;
+
+		if (iter.index > end)
+			break;
 repeat:
 		page = radix_tree_deref_slot(slot);
 		if (unlikely(!page))
@@ -1483,23 +1491,33 @@ repeat:
 
 		/* Has the page moved? */
 		if (unlikely(page != *slot)) {
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 
 		pages[ret] = page;
-		if (++ret == nr_pages)
-			break;
+		if (++ret == nr_pages) {
+			*index = pages[ret - 1]->index + 1;
+			goto out;
+		}
 	}
 
+	/*
+	 * We come here when we got at @end. We take care to not overflow the
+	 * index @index as it confuses some of the callers. This breaks the
+	 * iteration when there is page at index -1 but that is already broken
+	 * anyway.
+	 */
+	if (end == (pgoff_t)-1)
+		*index = (pgoff_t)-1;
+	else
+		*index = end + 1;
+out:
 	rcu_read_unlock();
-
-	if (ret)
-		*index = pages[ret - 1]->index + 1;
 
 	return ret;
 }
-EXPORT_SYMBOL(find_get_pages_tag);
+EXPORT_SYMBOL(find_get_pages_range_tag);
 
 /*
  * CD/DVDs are error prone. When a medium error occurs, the driver may fail
@@ -1548,11 +1566,11 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 	unsigned int prev_offset;
 	int error = 0;
 
-	index = *ppos >> PAGE_CACHE_SHIFT;
-	prev_index = ra->prev_pos >> PAGE_CACHE_SHIFT;
-	prev_offset = ra->prev_pos & (PAGE_CACHE_SIZE-1);
-	last_index = (*ppos + iter->count + PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT;
-	offset = *ppos & ~PAGE_CACHE_MASK;
+	index = *ppos >> PAGE_SHIFT;
+	prev_index = ra->prev_pos >> PAGE_SHIFT;
+	prev_offset = ra->prev_pos & (PAGE_SIZE-1);
+	last_index = (*ppos + iter->count + PAGE_SIZE-1) >> PAGE_SHIFT;
+	offset = *ppos & ~PAGE_MASK;
 
 	for (;;) {
 		struct page *page;
@@ -1591,7 +1609,7 @@ find_page:
 			if (PageUptodate(page))
 				goto page_ok;
 
-			if (inode->i_blkbits == PAGE_CACHE_SHIFT ||
+			if (inode->i_blkbits == PAGE_SHIFT ||
 					!mapping->a_ops->is_partially_uptodate)
 				goto page_not_up_to_date;
 			if (!trylock_page(page))
@@ -1615,18 +1633,18 @@ page_ok:
 		 */
 
 		isize = i_size_read(inode);
-		end_index = (isize - 1) >> PAGE_CACHE_SHIFT;
+		end_index = (isize - 1) >> PAGE_SHIFT;
 		if (unlikely(!isize || index > end_index)) {
-			page_cache_release(page);
+			put_page(page);
 			goto out;
 		}
 
 		/* nr is the maximum number of bytes to copy from this page */
-		nr = PAGE_CACHE_SIZE;
+		nr = PAGE_SIZE;
 		if (index == end_index) {
-			nr = ((isize - 1) & ~PAGE_CACHE_MASK) + 1;
+			nr = ((isize - 1) & ~PAGE_MASK) + 1;
 			if (nr <= offset) {
-				page_cache_release(page);
+				put_page(page);
 				goto out;
 			}
 		}
@@ -1654,11 +1672,11 @@ page_ok:
 
 		ret = copy_page_to_iter(page, offset, nr, iter);
 		offset += ret;
-		index += offset >> PAGE_CACHE_SHIFT;
-		offset &= ~PAGE_CACHE_MASK;
+		index += offset >> PAGE_SHIFT;
+		offset &= ~PAGE_MASK;
 		prev_offset = offset;
 
-		page_cache_release(page);
+		put_page(page);
 		written += ret;
 		if (!iov_iter_count(iter))
 			goto out;
@@ -1678,7 +1696,7 @@ page_not_up_to_date_locked:
 		/* Did it get truncated before we got the lock? */
 		if (!page->mapping) {
 			unlock_page(page);
-			page_cache_release(page);
+			put_page(page);
 			continue;
 		}
 
@@ -1700,7 +1718,7 @@ readpage:
 
 		if (unlikely(error)) {
 			if (error == AOP_TRUNCATED_PAGE) {
-				page_cache_release(page);
+				put_page(page);
 				error = 0;
 				goto find_page;
 			}
@@ -1717,7 +1735,7 @@ readpage:
 					 * invalidate_mapping_pages got it
 					 */
 					unlock_page(page);
-					page_cache_release(page);
+					put_page(page);
 					goto find_page;
 				}
 				unlock_page(page);
@@ -1732,7 +1750,7 @@ readpage:
 
 readpage_error:
 		/* UHHUH! A synchronous read error occurred. Report it */
-		page_cache_release(page);
+		put_page(page);
 		goto out;
 
 no_cached_page:
@@ -1748,7 +1766,7 @@ no_cached_page:
 		error = add_to_page_cache_lru(page, mapping, index,
 				mapping_gfp_constraint(mapping, GFP_KERNEL));
 		if (error) {
-			page_cache_release(page);
+			put_page(page);
 			if (error == -EEXIST) {
 				error = 0;
 				goto find_page;
@@ -1760,10 +1778,10 @@ no_cached_page:
 
 out:
 	ra->prev_pos = prev_index;
-	ra->prev_pos <<= PAGE_CACHE_SHIFT;
+	ra->prev_pos <<= PAGE_SHIFT;
 	ra->prev_pos |= prev_offset;
 
-	*ppos = ((loff_t)index << PAGE_CACHE_SHIFT) + offset;
+	*ppos = ((loff_t)index << PAGE_SHIFT) + offset;
 	file_accessed(filp);
 	return written ? written : error;
 }
@@ -1853,7 +1871,7 @@ static int page_cache_read(struct file *file, pgoff_t offset, gfp_t gfp_mask)
 		else if (ret == -EEXIST)
 			ret = 0; /* losing race to add is OK */
 
-		page_cache_release(page);
+		put_page(page);
 
 	} while (ret == AOP_TRUNCATED_PAGE);
 
@@ -1963,8 +1981,8 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	loff_t size;
 	int ret = 0;
 
-	size = round_up(i_size_read(inode), PAGE_CACHE_SIZE);
-	if (offset >= size >> PAGE_CACHE_SHIFT)
+	size = round_up(i_size_read(inode), PAGE_SIZE);
+	if (offset >= size >> PAGE_SHIFT)
 		return VM_FAULT_SIGBUS;
 
 	/*
@@ -1990,7 +2008,7 @@ retry_find:
 	}
 
 	if (!lock_page_or_retry(page, vma->vm_mm, vmf->flags)) {
-		page_cache_release(page);
+		put_page(page);
 		return ret | VM_FAULT_RETRY;
 	}
 
@@ -2013,10 +2031,10 @@ retry_find:
 	 * Found the page and have a reference on it.
 	 * We must recheck i_size under page lock.
 	 */
-	size = round_up(i_size_read(inode), PAGE_CACHE_SIZE);
-	if (unlikely(offset >= size >> PAGE_CACHE_SHIFT)) {
+	size = round_up(i_size_read(inode), PAGE_SIZE);
+	if (unlikely(offset >= size >> PAGE_SHIFT)) {
 		unlock_page(page);
-		page_cache_release(page);
+		put_page(page);
 		return VM_FAULT_SIGBUS;
 	}
 
@@ -2061,7 +2079,7 @@ page_not_uptodate:
 		if (!PageUptodate(page))
 			error = -EIO;
 	}
-	page_cache_release(page);
+	put_page(page);
 
 	if (!error || error == AOP_TRUNCATED_PAGE)
 		goto retry_find;
@@ -2104,7 +2122,7 @@ repeat:
 
 		/* Has the page moved? */
 		if (unlikely(page != *slot)) {
-			page_cache_release(page);
+			put_page(page);
 			goto repeat;
 		}
 
@@ -2118,8 +2136,8 @@ repeat:
 		if (page->mapping != mapping || !PageUptodate(page))
 			goto unlock;
 
-		size = round_up(i_size_read(mapping->host), PAGE_CACHE_SIZE);
-		if (page->index >= size >> PAGE_CACHE_SHIFT)
+		size = round_up(i_size_read(mapping->host), PAGE_SIZE);
+		if (page->index >= size >> PAGE_SHIFT)
 			goto unlock;
 
 		pte = vmf->pte + page->index - vmf->pgoff;
@@ -2129,13 +2147,13 @@ repeat:
 		if (file->f_ra.mmap_miss > 0)
 			file->f_ra.mmap_miss--;
 		addr = address + (page->index - vmf->pgoff) * PAGE_SIZE;
-		do_set_pte(vma, addr, page, pte, false, false);
+		do_set_pte(vma, addr, page, pte, false, false, vmf);
 		unlock_page(page);
 		goto next;
 unlock:
 		unlock_page(page);
 skip:
-		page_cache_release(page);
+		put_page(page);
 next:
 		if (iter.index == vmf->max_pgoff)
 			break;
@@ -2218,7 +2236,7 @@ static struct page *wait_on_page_read(struct page *page)
 	if (!IS_ERR(page)) {
 		wait_on_page_locked(page);
 		if (!PageUptodate(page)) {
-			page_cache_release(page);
+			put_page(page);
 			page = ERR_PTR(-EIO);
 		}
 	}
@@ -2241,7 +2259,7 @@ repeat:
 			return ERR_PTR(-ENOMEM);
 		err = add_to_page_cache_lru(page, mapping, index, gfp);
 		if (unlikely(err)) {
-			page_cache_release(page);
+			put_page(page);
 			if (err == -EEXIST)
 				goto repeat;
 			/* Presumably ENOMEM for radix tree node */
@@ -2251,7 +2269,7 @@ repeat:
 filler:
 		err = filler(data, page);
 		if (err < 0) {
-			page_cache_release(page);
+			put_page(page);
 			return ERR_PTR(err);
 		}
 
@@ -2304,7 +2322,7 @@ filler:
 	/* Case c or d, restart the operation */
 	if (!page->mapping) {
 		unlock_page(page);
-		page_cache_release(page);
+		put_page(page);
 		goto repeat;
 	}
 
@@ -2459,7 +2477,7 @@ generic_file_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
 	struct iov_iter data;
 
 	write_len = iov_iter_count(from);
-	end = (pos + write_len - 1) >> PAGE_CACHE_SHIFT;
+	end = (pos + write_len - 1) >> PAGE_SHIFT;
 
 	written = filemap_write_and_wait_range(mapping, pos, pos + write_len - 1);
 	if (written)
@@ -2473,7 +2491,7 @@ generic_file_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
 	 */
 	if (mapping->nrpages) {
 		written = invalidate_inode_pages2_range(mapping,
-					pos >> PAGE_CACHE_SHIFT, end);
+					pos >> PAGE_SHIFT, end);
 		/*
 		 * If a page can not be invalidated, return 0 to fall back
 		 * to buffered write.
@@ -2498,7 +2516,7 @@ generic_file_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
 	 */
 	if (mapping->nrpages) {
 		invalidate_inode_pages2_range(mapping,
-					      pos >> PAGE_CACHE_SHIFT, end);
+					      pos >> PAGE_SHIFT, end);
 	}
 
 	if (written > 0) {
@@ -2559,8 +2577,8 @@ ssize_t generic_perform_write(struct file *file,
 		size_t copied;		/* Bytes copied from user */
 		void *fsdata;
 
-		offset = (pos & (PAGE_CACHE_SIZE - 1));
-		bytes = min_t(unsigned long, PAGE_CACHE_SIZE - offset,
+		offset = (pos & (PAGE_SIZE - 1));
+		bytes = min_t(unsigned long, PAGE_SIZE - offset,
 						iov_iter_count(i));
 
 again:
@@ -2613,7 +2631,7 @@ again:
 			 * because not all segments in the iov can be copied at
 			 * once without a pagefault.
 			 */
-			bytes = min_t(unsigned long, PAGE_CACHE_SIZE - offset,
+			bytes = min_t(unsigned long, PAGE_SIZE - offset,
 						iov_iter_single_seg_count(i));
 			goto again;
 		}
@@ -2700,8 +2718,8 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			iocb->ki_pos = endbyte + 1;
 			written += status;
 			invalidate_mapping_pages(mapping,
-						 pos >> PAGE_CACHE_SHIFT,
-						 endbyte >> PAGE_CACHE_SHIFT);
+						 pos >> PAGE_SHIFT,
+						 endbyte >> PAGE_SHIFT);
 		} else {
 			/*
 			 * We don't know how much we wrote, so just return

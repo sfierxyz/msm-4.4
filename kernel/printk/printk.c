@@ -49,6 +49,8 @@
 
 #include <asm/uaccess.h>
 
+#include "../printk_interface.h"
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>
 
@@ -236,7 +238,11 @@ struct printk_log {
 	u8 facility;		/* syslog facility */
 	u8 flags:5;		/* internal record flags */
 	u8 level:3;		/* syslog level */
-};
+}
+#ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
+__packed __aligned(4)
+#endif
+;
 
 /*
  * The logbuf_lock protects kmsg buffer, indices, counters.  This can be taken
@@ -277,11 +283,7 @@ static u32 clear_idx;
 #define LOG_FACILITY(v)		((v) >> 3 & 0xff)
 
 /* record buffer */
-#if defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)
-#define LOG_ALIGN 4
-#else
 #define LOG_ALIGN __alignof__(struct printk_log)
-#endif
 #define __LOG_BUF_LEN (1 << CONFIG_LOG_BUF_SHIFT)
 #define LOG_BUF_LEN_MAX (u32)(1 << 31)
 static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
@@ -660,6 +662,11 @@ static ssize_t devkmsg_write(struct kiocb *iocb, struct iov_iter *from)
 			len -= endp - line;
 			line = endp;
 		}
+	}
+
+	if (strncmp("healthd", line, 7) == 0) {
+	        kfree(buf);
+		return len;
 	}
 
 	printk_emit(facility, level, NULL, 0, "%s", line);
@@ -1059,6 +1066,7 @@ static size_t print_time(u64 ts, char *buf)
 	if (!printk_time)
 		return 0;
 
+	ts += get_total_sleep_time_nsec();
 	rem_nsec = do_div(ts, 1000000000);
 
 	if (!buf)
@@ -1451,7 +1459,7 @@ static void call_console_drivers(int level,
 {
 	struct console *con;
 
-	trace_console_rcuidle(text, len);
+//	trace_console_rcuidle(text, len);
 
 	if (level >= console_loglevel && !ignore_loglevel)
 		return;
@@ -1687,6 +1695,10 @@ asmlinkage int vprintk_emit(int facility, int level,
 	/* cpu currently holding logbuf_lock in this function */
 	static unsigned int logbuf_cpu = UINT_MAX;
 
+	// if printk mode is disabled, terminate instantly
+	if (printk_mode == 0)
+			return 0;
+
 	if (level == LOGLEVEL_SCHED) {
 		level = LOGLEVEL_DEFAULT;
 		in_sched = true;
@@ -1851,6 +1863,10 @@ EXPORT_SYMBOL(vprintk_emit);
 
 asmlinkage int vprintk(const char *fmt, va_list args)
 {
+	// if printk mode is disabled, terminate instantly
+	if (printk_mode == 0)
+			return 0;
+
 	return vprintk_emit(0, LOGLEVEL_DEFAULT, NULL, 0, fmt, args);
 }
 EXPORT_SYMBOL(vprintk);
@@ -1861,6 +1877,10 @@ asmlinkage int printk_emit(int facility, int level,
 {
 	va_list args;
 	int r;
+
+	// if printk mode is disabled, terminate instantly
+	if (printk_mode == 0)
+			return 0;
 
 	va_start(args, fmt);
 	r = vprintk_emit(facility, level, dict, dictlen, fmt, args);
@@ -1873,6 +1893,10 @@ EXPORT_SYMBOL(printk_emit);
 int vprintk_default(const char *fmt, va_list args)
 {
 	int r;
+
+	// if printk mode is disabled, terminate instantly
+	if (printk_mode == 0)
+			return 0;
 
 #ifdef CONFIG_KGDB_KDB
 	if (unlikely(kdb_trap_printk)) {
@@ -1920,6 +1944,10 @@ asmlinkage __visible int printk(const char *fmt, ...)
 	printk_func_t vprintk_func;
 	va_list args;
 	int r;
+
+	// if printk mode is disabled, terminate instantly
+	if (printk_mode == 0)
+		return 0;
 
 	va_start(args, fmt);
 
@@ -2133,6 +2161,8 @@ void resume_console(void)
 	console_unlock();
 }
 
+#ifdef CONFIG_CONSOLE_FLUSH_ON_HOTPLUG
+
 /**
  * console_cpu_notify - print deferred console messages after CPU hotplug
  * @self: notifier struct
@@ -2152,11 +2182,17 @@ static int console_cpu_notify(struct notifier_block *self,
 	case CPU_DEAD:
 	case CPU_DOWN_FAILED:
 	case CPU_UP_CANCELED:
+	case CPU_DYING:
+#ifdef CONFIG_CONSOLE_FLUSH_ON_HOTPLUG
 		console_lock();
 		console_unlock();
+#endif
+		break;
 	}
 	return NOTIFY_OK;
 }
+
+#endif
 
 /**
  * console_lock - lock the console system for exclusive use.
@@ -2722,7 +2758,9 @@ static int __init printk_late_init(void)
 			unregister_console(con);
 		}
 	}
+#ifdef CONFIG_CONSOLE_FLUSH_ON_HOTPLUG
 	hotcpu_notifier(console_cpu_notify, 0);
+#endif
 	return 0;
 }
 late_initcall(printk_late_init);

@@ -62,7 +62,7 @@ void cfg80211_ibss_joined(struct net_device *dev, const u8 *bssid,
 	struct cfg80211_event *ev;
 	unsigned long flags;
 
-	trace_cfg80211_ibss_joined(dev, bssid, channel);
+//	trace_cfg80211_ibss_joined(dev, bssid, channel);
 
 	if (WARN_ON(!channel))
 		return;
@@ -186,6 +186,7 @@ static void __cfg80211_clear_ibss(struct net_device *dev, bool nowext)
 	if (!nowext)
 		wdev->wext.ibss.ssid_len = 0;
 #endif
+	cfg80211_sched_dfs_chan_update(rdev);
 }
 
 void cfg80211_clear_ibss(struct net_device *dev, bool nowext)

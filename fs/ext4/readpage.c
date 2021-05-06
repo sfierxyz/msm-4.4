@@ -23,7 +23,7 @@
  *
  * then this code just gives up and calls the buffer_head-based read function.
  * It does handle a page which has holes at the end - that is a common case:
- * the end-of-file on blocksize < PAGE_CACHE_SIZE setups.
+ * the end-of-file on blocksize < PAGE_SIZE setups.
  *
  */
 
@@ -45,6 +45,7 @@
 #include <linux/cleancache.h>
 
 #include "ext4.h"
+#include "ext4_ice.h"
 #include <trace/events/android_fs.h>
 
 /*
@@ -63,12 +64,17 @@ static void completion_pages(struct work_struct *work)
 	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
 
-		int ret = ext4_decrypt(page);
-		if (ret) {
-			WARN_ON_ONCE(1);
-			SetPageError(page);
-		} else
+		if (ext4_is_ice_enabled()) {
 			SetPageUptodate(page);
+		} else {
+			int ret = ext4_decrypt(page);
+
+			if (ret) {
+				WARN_ON_ONCE(1);
+				SetPageError(page);
+			} else
+				SetPageUptodate(page);
+		}
 		unlock_page(page);
 	}
 	ext4_release_crypto_ctx(ctx);
@@ -90,12 +96,12 @@ static inline bool ext4_bio_encrypted(struct bio *bio)
 static void
 ext4_trace_read_completion(struct bio *bio)
 {
-	struct page *first_page = bio->bi_io_vec[0].bv_page;
+/*	struct page *first_page = bio->bi_io_vec[0].bv_page;
 
 	if (first_page != NULL)
 		trace_android_fs_dataread_end(first_page->mapping->host,
 					      page_offset(first_page),
-					      bio->bi_iter.bi_size);
+					      bio->bi_iter.bi_size); */
 }
 
 /*
@@ -148,7 +154,7 @@ static void mpage_end_io(struct bio *bio)
 static void
 ext4_submit_bio_read(struct bio *bio)
 {
-	if (trace_android_fs_dataread_start_enabled()) {
+/*	if (trace_android_fs_dataread_start_enabled()) {
 		struct page *first_page = bio->bi_io_vec[0].bv_page;
 
 		if (first_page != NULL) {
@@ -165,7 +171,7 @@ ext4_submit_bio_read(struct bio *bio)
 				path,
 				current->comm);
 		}
-	}
+	} */
 	submit_bio(READ, bio);
 }
 
@@ -179,7 +185,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 
 	struct inode *inode = mapping->host;
 	const unsigned blkbits = inode->i_blkbits;
-	const unsigned blocks_per_page = PAGE_CACHE_SIZE >> blkbits;
+	const unsigned blocks_per_page = PAGE_SIZE >> blkbits;
 	const unsigned blocksize = 1 << blkbits;
 	sector_t block_in_file;
 	sector_t last_block;
@@ -205,14 +211,14 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			page = list_entry(pages->prev, struct page, lru);
 			list_del(&page->lru);
 			if (add_to_page_cache_lru(page, mapping, page->index,
-				  mapping_gfp_constraint(mapping, GFP_KERNEL)))
+				  readahead_gfp_mask(mapping)))
 				goto next_page;
 		}
 
 		if (page_has_buffers(page))
 			goto confused;
 
-		block_in_file = (sector_t)page->index << (PAGE_CACHE_SHIFT - blkbits);
+		block_in_file = (sector_t)page->index << (PAGE_SHIFT - blkbits);
 		last_block = block_in_file + nr_pages * blocks_per_page;
 		last_block_in_file = (i_size_read(inode) + blocksize - 1) >> blkbits;
 		if (last_block > last_block_in_file)
@@ -256,7 +262,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 				set_error_page:
 					SetPageError(page);
 					zero_user_segment(page, 0,
-							  PAGE_CACHE_SIZE);
+							  PAGE_SIZE);
 					unlock_page(page);
 					goto next_page;
 				}
@@ -289,7 +295,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		}
 		if (first_hole != blocks_per_page) {
 			zero_user_segment(page, first_hole << blkbits,
-					  PAGE_CACHE_SIZE);
+					  PAGE_SIZE);
 			if (first_hole == 0) {
 				SetPageUptodate(page);
 				unlock_page(page);
@@ -358,7 +364,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			unlock_page(page);
 	next_page:
 		if (pages)
-			page_cache_release(page);
+			put_page(page);
 	}
 	BUG_ON(pages && !list_empty(pages));
 	if (bio)

@@ -1357,7 +1357,7 @@ struct xhci_td {
 };
 
 /* xHCI command default timeout value */
-#define XHCI_CMD_DEFAULT_TIMEOUT	(5 * HZ)
+#define XHCI_CMD_DEFAULT_TIMEOUT	(5 * 100)
 
 /* command descriptor */
 struct xhci_cd {
@@ -1522,6 +1522,9 @@ struct xhci_hcd {
 	/* Our HCD's current interrupter register set */
 	struct	xhci_intr_reg __iomem *ir_set;
 
+	/* secondary interrupter */
+	struct	xhci_intr_reg __iomem **sec_ir_set;
+
 	/* Cached register copies of read-only HC data */
 	__u32		hcs_params1;
 	__u32		hcs_params2;
@@ -1563,6 +1566,11 @@ struct xhci_hcd {
 	struct xhci_command	*current_cmd;
 	struct xhci_ring	*event_ring;
 	struct xhci_erst	erst;
+
+	/* secondary event ring and erst */
+	struct xhci_ring	**sec_event_ring;
+	struct xhci_erst	*sec_erst;
+
 	/* Scratchpad */
 	struct xhci_scratchpad  *scratchpad;
 	/* Store LPM test failed devices' information */
@@ -1665,6 +1673,7 @@ struct xhci_hcd {
 	/* Compliance Mode Recovery Data */
 	struct timer_list	comp_mode_recovery_timer;
 	u32			port_status_u0;
+	bool			suspended;
 /* Compliance Mode Timer Triggered every 2 seconds */
 #define COMP_MODE_RCVRY_MSECS 2000
 };
@@ -1733,6 +1742,7 @@ static inline int xhci_link_trb_quirk(struct xhci_hcd *xhci)
 }
 
 /* xHCI debugging */
+#ifdef CONFIG_DEBUG_KERNEL
 void xhci_print_ir_set(struct xhci_hcd *xhci, int set_num);
 void xhci_print_registers(struct xhci_hcd *xhci);
 void xhci_dbg_regs(struct xhci_hcd *xhci);
@@ -1752,6 +1762,27 @@ void xhci_dbg_ep_rings(struct xhci_hcd *xhci,
 		struct xhci_virt_ep *ep);
 void xhci_dbg_trace(struct xhci_hcd *xhci, void (*trace)(struct va_format *),
 			const char *fmt, ...);
+#else
+static inline void xhci_print_ir_set(struct xhci_hcd *xhci, int set_num) {}
+static inline void xhci_print_registers(struct xhci_hcd *xhci) {}
+static inline void xhci_dbg_regs(struct xhci_hcd *xhci) {}
+static inline void xhci_print_run_regs(struct xhci_hcd *xhci) {}
+static inline void xhci_print_trb_offsets(struct xhci_hcd *xhci, union xhci_trb *trb) {}
+static inline void xhci_debug_trb(struct xhci_hcd *xhci, union xhci_trb *trb) {}
+static inline void xhci_debug_segment(struct xhci_hcd *xhci, struct xhci_segment *seg) {}
+static inline void xhci_debug_ring(struct xhci_hcd *xhci, struct xhci_ring *ring) {}
+static inline void xhci_dbg_erst(struct xhci_hcd *xhci, struct xhci_erst *erst) {}
+static inline void xhci_dbg_cmd_ptrs(struct xhci_hcd *xhci) {}
+static inline void xhci_dbg_ring_ptrs(struct xhci_hcd *xhci, struct xhci_ring *ring) {}
+static inline void xhci_dbg_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx, unsigned int last_ep) {}
+static inline char *xhci_get_slot_state(struct xhci_hcd *xhci,
+		struct xhci_container_ctx *ctx) { return ""; }
+static inline void xhci_dbg_ep_rings(struct xhci_hcd *xhci,
+		unsigned int slot_id, unsigned int ep_index,
+		struct xhci_virt_ep *ep) {}
+static inline void xhci_dbg_trace(struct xhci_hcd *xhci, void (*trace)(struct va_format *),
+			const char *fmt, ...) {}
+#endif
 
 /* xHCI memory management */
 void xhci_mem_cleanup(struct xhci_hcd *xhci);
@@ -1822,10 +1853,14 @@ struct xhci_command *xhci_alloc_command(struct xhci_hcd *xhci,
 void xhci_urb_free_priv(struct urb_priv *urb_priv);
 void xhci_free_command(struct xhci_hcd *xhci,
 		struct xhci_command *command);
+int xhci_sec_event_ring_setup(struct usb_hcd *hcd, unsigned intr_num);
+int xhci_sec_event_ring_cleanup(struct usb_hcd *hcd, unsigned intr_num);
 
 /* xHCI host controller glue */
 typedef void (*xhci_get_quirks_t)(struct device *, struct xhci_hcd *);
 int xhci_handshake(void __iomem *ptr, u32 mask, u32 done, int usec);
+int xhci_handshake_check_state(struct xhci_hcd *xhci,
+		void __iomem *ptr, u32 mask, u32 done, int usec);
 void xhci_quiesce(struct xhci_hcd *xhci);
 int xhci_halt(struct xhci_hcd *xhci);
 int xhci_reset(struct xhci_hcd *xhci);
@@ -1960,5 +1995,9 @@ void xhci_ring_device(struct xhci_hcd *xhci, int slot_id);
 struct xhci_input_control_ctx *xhci_get_input_control_ctx(struct xhci_container_ctx *ctx);
 struct xhci_slot_ctx *xhci_get_slot_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx);
 struct xhci_ep_ctx *xhci_get_ep_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx, unsigned int ep_index);
+
+/* EHSET */
+int xhci_submit_single_step_set_feature(struct usb_hcd *hcd, struct urb *urb,
+					int is_setup);
 
 #endif /* __LINUX_XHCI_HCD_H */

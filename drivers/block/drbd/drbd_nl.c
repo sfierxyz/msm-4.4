@@ -1147,7 +1147,7 @@ static void drbd_setup_queue_param(struct drbd_device *device, struct drbd_backi
 	blk_queue_max_hw_sectors(q, max_hw_sectors);
 	/* This is the workaround for "bio would need to, but cannot, be split" */
 	blk_queue_max_segments(q, max_segments ? max_segments : BLK_MAX_SEGMENTS);
-	blk_queue_segment_boundary(q, PAGE_CACHE_SIZE-1);
+	blk_queue_segment_boundary(q, PAGE_SIZE-1);
 
 	if (b) {
 		struct drbd_connection *connection = first_peer_device(device)->connection;
@@ -1171,11 +1171,11 @@ static void drbd_setup_queue_param(struct drbd_device *device, struct drbd_backi
 
 		blk_queue_stack_limits(q, b);
 
-		if (q->backing_dev_info.ra_pages != b->backing_dev_info.ra_pages) {
+		if (q->backing_dev_info->ra_pages != b->backing_dev_info->ra_pages) {
 			drbd_info(device, "Adjusting my ra_pages to backing device's (%lu -> %lu)\n",
-				 q->backing_dev_info.ra_pages,
-				 b->backing_dev_info.ra_pages);
-			q->backing_dev_info.ra_pages = b->backing_dev_info.ra_pages;
+				 q->backing_dev_info->ra_pages,
+				 b->backing_dev_info->ra_pages);
+			q->backing_dev_info->ra_pages = b->backing_dev_info->ra_pages;
 		}
 	}
 }

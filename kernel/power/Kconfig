@@ -38,6 +38,13 @@ config WAKELOCK
 
 	  Say Y if you are running an android userspace.
 
+config POWERSUSPEND
+	bool "Power suspend"
+	default y
+	---help---
+	  Call early suspend handlers when the user requested sleep state
+	  changes.
+
 config HIBERNATE_CALLBACKS
 	bool
 
@@ -322,3 +329,13 @@ config PM_GENERIC_DOMAINS_OF
 
 config CPU_PM
 	bool
+
+config DEDUCE_WAKEUP_REASONS
+	bool
+	default n
+
+config BOEFFLA_WL_BLOCKER
+	bool "Boeffla generic wakelock blocker driver"
+	depends on PM
+	default N
+
